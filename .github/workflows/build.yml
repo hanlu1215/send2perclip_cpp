@@ -1,0 +1,165 @@
+# GitHub Actions：在 Windows 上构建 send2perclip（C++ / CMake）
+#
+# 触发：
+#   push 到 main            -> 构建 + 上传 artifact
+#   push tag v*（如 v1.0.0） -> 构建 + 上传 artifact + 创建/更新 Release 并附上 exe
+#   pull request / 手动      -> 只构建 + 上传 artifact
+#
+# 两条构建线（都产出静态链接、可直接拷走运行的 exe）：
+#   msvc-x64     : Visual Studio 2022 生成器，/MT 静态 CRT
+#   mingw-ucrt64 : MSYS2 UCRT64 里的 GCC + Ninja，-static 静态 libstdc++/libgcc
+#
+# 每个 job 构建后都会检查导入表，确认没有 MSVCP140.dll / libstdc++-6.dll 之类的
+# 非系统依赖，防止哪天误删 CMakeLists.txt 里的静态链接选项而 CI 仍然"绿"。
+name: Build
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+# 同一分支/PR 连续推送时取消上一个未完成的运行，省 CI 额度
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  # ------------------------------------------------------------ MSVC x64
+  msvc-x64:
+    name: MSVC x64 (Visual Studio 2022)
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # CMakeLists.txt 里 CMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded，即 /MT
+      - name: Configure
+        run: cmake -S . -B build-msvc -G "Visual Studio 17 2022" -A x64
+
+      - name: Build (Release)
+        run: cmake --build build-msvc --config Release --parallel
+
+      - name: Check static linkage (no MSVC runtime DLLs)
+        shell: pwsh
+        run: |
+          $exe = "build-msvc/Release/send2perclip.exe"
+          if (-not (Test-Path $exe)) { throw "未找到构建产物 $exe" }
+
+          # windows-latest 上 dumpbin 不在 PATH 里，从 vswhere 找到的 VS 安装目录里取
+          $vswhere = Join-Path ${env:ProgramFiles(x86)} "Microsoft Visual Studio\Installer\vswhere.exe"
+          $vsPath  = & $vswhere -latest -products * `
+                                 -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 `
+                                 -property installationPath
+          $dumpbin = Get-ChildItem "$vsPath\VC\Tools\MSVC\*\bin\Hostx64\x64\dumpbin.exe" |
+                     Select-Object -First 1 -ExpandProperty FullName
+          if (-not $dumpbin) { throw "找不到 dumpbin.exe" }
+
+          $deps = & $dumpbin /nologo /dependents $exe
+          $deps | Write-Host
+
+          $bad = $deps | Select-String -Pattern 'MSVCP\d+\.dll|VCRUNTIME\d*\.dll|libstdc\+\+|libgcc'
+          if ($bad) { throw "存在非静态运行库依赖：`n$bad" }
+          Write-Host "OK：只依赖 Windows 系统 DLL。"
+
+      - name: Stage artifact
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force dist | Out-Null
+          Copy-Item build-msvc/Release/send2perclip.exe dist/send2perclip-windows-x64-msvc.exe
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: send2perclip-windows-x64-msvc
+          path: dist/send2perclip-windows-x64-msvc.exe
+          if-no-files-found: error
+          retention-days: 30
+
+  # -------------------------------------------------------- MinGW-w64 GCC
+  mingw-ucrt64:
+    name: MinGW-w64 GCC (MSYS2 UCRT64)
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup MSYS2 (UCRT64 toolchain)
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: UCRT64
+          # gcc 自带 windres，用于编译 app.rc 里的 exe 图标
+          install: >-
+            mingw-w64-ucrt-x86_64-gcc
+            mingw-w64-ucrt-x86_64-cmake
+            mingw-w64-ucrt-x86_64-ninja
+
+      # CMakeLists.txt 非 MSVC 分支会加 -static -static-libgcc -static-libstdc++
+      - name: Configure & build (Release)
+        shell: msys2 {0}
+        run: |
+          cmake -S . -B build-mingw -G Ninja -DCMAKE_BUILD_TYPE=Release
+          cmake --build build-mingw
+
+      - name: Check static linkage (no libstdc++ / libgcc / winpthread)
+        shell: msys2 {0}
+        run: |
+          objdump -p build-mingw/send2perclip.exe | grep 'DLL Name'
+
+          if objdump -p build-mingw/send2perclip.exe |
+               grep -E 'DLL Name: (libstdc\+\+|libgcc|libwinpthread)'; then
+            echo "::error::存在非静态运行库依赖"
+            exit 1
+          fi
+          echo "OK：只依赖 Windows 系统 DLL。"
+
+      - name: Stage artifact
+        shell: msys2 {0}
+        run: |
+          mkdir -p dist
+          cp build-mingw/send2perclip.exe dist/send2perclip-windows-x64-mingw.exe
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: send2perclip-windows-x64-mingw
+          path: dist/send2perclip-windows-x64-mingw.exe
+          if-no-files-found: error
+          retention-days: 30
+
+  # ------------------------------------------------------------- Release
+  release:
+    name: Attach binaries to GitHub Release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [msvc-x64, mingw-ucrt64]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: send2perclip-*
+          path: dist
+          merge-multiple: true
+
+      - name: List files
+        run: ls -lh dist
+
+      # gh 已预装在 runner 上，actions/checkout 不是必需的
+      - name: Create or update release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view "${GITHUB_REF_NAME}" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
+            gh release upload "${GITHUB_REF_NAME}" dist/* --clobber --repo "${GITHUB_REPOSITORY}"
+          else
+            gh release create "${GITHUB_REF_NAME}" dist/* \
+              --repo "${GITHUB_REPOSITORY}" \
+              --title "${GITHUB_REF_NAME}" \
+              --generate-notes
+          fi

@@ -60,6 +60,31 @@ cmake --build build --config Release
 - Ninja / Makefile：`build/send2perclip.exe`
 - Visual Studio：`build/Release/send2perclip.exe`
 
+### GitHub Actions 自动构建
+
+`.github/workflows/build.yml` 在 GitHub 的 Windows runner 上自动构建，本机无需装任何工具链：
+
+| 任务 | 工具链 | 产物 |
+| --- | --- | --- |
+| `msvc-x64` | Visual Studio 2022 生成器，`/MT` 静态 CRT | `send2perclip-windows-x64-msvc.exe` |
+| `mingw-ucrt64` | MSYS2 UCRT64 的 GCC + Ninja，`-static` | `send2perclip-windows-x64-mingw.exe` |
+
+触发条件与行为：
+
+- push 到 `main`：构建两条线，产物上传为 Artifact（仓库 → Actions → 对应 run → Artifacts，保留 30 天）。
+- push `v*` 标签（如 `v1.0.0`）：除上面以外，再自动创建 / 更新 Release，并把两个 exe 作为附件发布。
+- Pull Request、手动 `workflow_dispatch`：只构建 + 上传 Artifact。
+
+两个 job 在构建后都会检查 exe 的导入表，一旦出现 `MSVCP140.dll`、`VCRUNTIME140.dll`、
+`libstdc++-6.dll` 这类非系统依赖就直接失败 —— 防止哪天误改了静态链接配置而 CI 仍然"绿"。
+
+发布新版本：
+
+```powershell
+git tag v1.0.0
+git push origin v1.0.0
+```
+
 ### 检查是否已静态链接
 
 ```powershell
