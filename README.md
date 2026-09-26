@@ -62,21 +62,25 @@ cmake --build build --config Release
 
 ### GitHub Actions 自动构建
 
-`.github/workflows/build.yml` 在 GitHub 的 Windows runner 上自动构建，本机无需装任何工具链：
+`.github/workflows/build.yml` 在 GitHub 的 Windows runner 上自动构建，本机无需装任何工具链。
+只用一条线：**MSYS2 UCRT64 里的 MinGW-w64 GCC + Ninja**。
 
 | 任务 | 工具链 | 产物 |
 | --- | --- | --- |
-| `msvc-x64` | Visual Studio 2022 生成器，`/MT` 静态 CRT | `send2perclip-windows-x64-msvc.exe` |
-| `mingw-ucrt64` | MSYS2 UCRT64 的 GCC + Ninja，`-static` | `send2perclip-windows-x64-mingw.exe` |
+| `build-windows` | MSYS2 UCRT64 的 MinGW-w64 GCC + Ninja，走 CMakeLists.txt 的 `-static` 分支 | `send2perclip.exe`（Artifact 名 `send2perclip-windows-x64`） |
 
 触发条件与行为：
 
-- push 到 `main`：构建两条线，产物上传为 Artifact（仓库 → Actions → 对应 run → Artifacts，保留 30 天）。
-- push `v*` 标签（如 `v1.0.0`）：除上面以外，再自动创建 / 更新 Release，并把两个 exe 作为附件发布。
+- push 到 `main`：构建并上传 Artifact（仓库 → Actions → 对应 run → Artifacts，保留 30 天）。
+- push `v*` 标签（如 `v1.0.0`）：除上面以外，再自动创建 / 更新 Release，并把 `send2perclip.exe` 作为附件发布。
 - Pull Request、手动 `workflow_dispatch`：只构建 + 上传 Artifact。
 
-两个 job 在构建后都会检查 exe 的导入表，一旦出现 `MSVCP140.dll`、`VCRUNTIME140.dll`、
-`libstdc++-6.dll` 这类非系统依赖就直接失败 —— 防止哪天误改了静态链接配置而 CI 仍然"绿"。
+> 之前还有一条 MSVC 构建线，但 GitHub 的 `windows-latest` 镜像会随 Visual Studio 主版本升级而变
+> （写死 `-G "Visual Studio 17 2022"` 会报 `could not find any instance of Visual Studio`），
+> 现只保留 MinGW-w64 一条线：产物同样是静态链接，可直接拷到别的 Windows 机器上跑。
+
+构建后会检查 exe 的导入表，一旦出现 `libstdc++-6.dll`、`libgcc_s_*.dll`、`libwinpthread-1.dll`
+这类非系统依赖就直接失败 —— 防止哪天误改了静态链接配置而 CI 仍然"绿"。
 
 发布新版本：
 
