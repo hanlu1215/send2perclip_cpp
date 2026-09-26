@@ -1,0 +1,14 @@
+// send2perclip 可执行文件的 Windows 资源脚本
+//
+// 这里只做一件事：把 ks.ico 作为图标资源编进 exe。
+// 资源 ID 用 1 —— Windows 资源管理器取 exe 中 ID 最小的 ICON 作为程序图标，
+// 所以 ID 1 就是“程序图标”本身。
+//
+// 图标文件用相对路径，由 CMake 传进来的 include 目录（项目根目录）解析，
+// 见 CMakeLists.txt 里的 target_include_directories(... ${CMAKE_CURRENT_SOURCE_DIR})。
+//
+// 这里故意不 #include <windows.h>：纯 ICON 语句用不到任何宏，
+// 少一个对 Windows SDK include 路径的依赖，MSVC(rc.exe) 与 MinGW(windres) 都能编。
+// 如果以后想显示“版本 / 公司名 / 产品名”，再补一段 VERSIONINFO（那时需要 <windows.h>）。
+
+1 ICON "ks.ico"

@@ -6,6 +6,10 @@ if(NOT WIN32)
     message(FATAL_ERROR "send2perclip 依赖 Windows 的键盘钩子与剪贴板 API，只能在 Windows 上构建。")
 endif()
 
+# 资源编译器：把 ks.ico 编进 exe（MSVC 用 rc.exe，MinGW 用 windres）。
+# 必须在 add_executable 之前启用，否则目标拿不到 RC 语言支持。
+enable_language(RC)
+
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
@@ -21,9 +25,12 @@ add_executable(send2perclip
     src/csv.cpp
     src/paste_watcher.cpp
     src/text.cpp
+    app.rc              # Windows 资源：exe 图标（ks.ico）
 )
 
-target_include_directories(send2perclip PRIVATE src)
+# 项目根目录也进 include 路径，这样 app.rc 里的相对路径 "ks.ico" 能被
+# rc.exe / windres 找到（资源编译器同样使用目标的 include 目录）。
+target_include_directories(send2perclip PRIVATE src ${CMAKE_CURRENT_SOURCE_DIR})
 
 # user32: 键盘钩子 / 剪贴板；kernel32（默认已包含）: Beep / Sleep 等
 target_link_libraries(send2perclip PRIVATE user32)

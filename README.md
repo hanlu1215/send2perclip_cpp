@@ -7,6 +7,8 @@
 
 ```
 CMakeLists.txt
+app.rc            Windows 资源脚本：把 ks.ico 作为图标（资源 ID 1）编进 exe
+ks.ico            exe 图标文件
 src/
   main.cpp          主流程：读剪贴板 → 逐行写入剪贴板 → 等 Ctrl+V
   config.h          可调参数（与 Python 版的常量一一对应）
@@ -26,6 +28,15 @@ src/
 
 > 剩下的 `KERNEL32.dll`、`USER32.dll`、`ucrtbase.dll`（`api-ms-win-crt-*`）是 Windows 自带组件，
 > 属于系统 API，无法也不需要静态链接。
+
+### exe 图标
+
+图标由 `app.rc` 提供，CMake 会自动启用 RC 语言：MSVC 用 `rc.exe`，MinGW 用 `windres`。
+`app.rc` 里只有一行 `1 ICON "ks.ico"` —— 资源 ID 1 就是“程序图标”，资源管理器取 exe 中
+ID 最小的 ICON 作为显示图标。
+
+换图标只需把新的 `.ico` 覆盖 `ks.ico`（或改 `app.rc` 里的文件名）后重新构建，无需改 CMake。
+`ks.ico` 里若包含多个尺寸（16/32/48/256），会被整份编进去，Windows 会按需挑分辨率。
 
 ### 命令行（Ninja，速度快，推荐）
 
